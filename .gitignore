@@ -1,0 +1,6 @@
+# Personal notes
+cortex/*.md
+
+# Environment
+.env
+VAULT_PATH
