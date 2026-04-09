@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 )
 
 var vaultPath = os.Getenv("VAULT_PATH")
+var docs []Doc
 
 type Frontmatter struct {
 	Title   string
@@ -32,6 +35,12 @@ type Doc struct {
 	Frontmatter Frontmatter
 	Content     string
 	HTML        string
+}
+
+type DocSummary struct {
+	Slug  string   `json:"slug"`
+	Title string   `json:"title"`
+	Tags  []string `json:"tags"`
 }
 
 func getSlugFromPath(vaultPath, filePath string) string {
@@ -118,7 +127,7 @@ func loadDocs(vault string) []Doc {
 			return nil
 		}
 
-		if d.IsDir() && !strings.HasSuffix(d.Name(), ".md") {
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}
 
@@ -146,12 +155,103 @@ func loadDocs(vault string) []Doc {
 	return docs
 }
 
+func writeJson(w http.ResponseWriter, data any) {
+	w.Header().Set("content-type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+func handleDocs(w http.ResponseWriter, r *http.Request) {
+	var result []DocSummary
+	for _, doc := range docs {
+		result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Tags})
+	}
+	writeJson(w, result)
+}
+
+func handleDoc(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	for _, doc := range docs {
+		if doc.Slug == slug {
+			writeJson(w, struct {
+				Slug    string   `json:"slug"`
+				Title   string   `json:"title"`
+				Tags    []string `json:"tags"`
+				Related []string `json:"related"`
+				HTML    string   `json:"html"`
+			}{
+				Slug:    doc.Slug,
+				Title:   doc.Frontmatter.Title,
+				Tags:    doc.Frontmatter.Tags,
+				Related: doc.Frontmatter.Related,
+				HTML:    doc.HTML,
+			})
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
+func handleTags(w http.ResponseWriter, r *http.Request) {
+	type tagCount struct {
+		Tag   string `json:"tag"`
+		Count int    `json:"count"`
+	}
+	counts := map[string]int{}
+	for _, doc := range docs {
+		for _, tag := range doc.Frontmatter.Tags {
+			counts[tag]++
+		}
+	}
+	var result []tagCount
+	for tag, count := range counts {
+		result = append(result, tagCount{tag, count})
+	}
+	writeJson(w, result)
+}
+
+func handleTag(w http.ResponseWriter, r *http.Request) {
+	tag := r.PathValue("tag")
+	var result []DocSummary
+	for _, doc := range docs {
+		for _, t := range doc.Frontmatter.Tags {
+			if t == tag {
+				result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Tags})
+			}
+		}
+	}
+	writeJson(w, result)
+}
+
+func handleSearch(w http.ResponseWriter, r *http.Request) {
+	query := strings.ToLower(r.URL.Query().Get("q"))
+	var result []DocSummary
+	for _, doc := range docs {
+		if strings.Contains(strings.ToLower(doc.Frontmatter.Title), query) ||
+			strings.Contains(strings.ToLower(doc.Content), query) {
+			result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Tags})
+		}
+	}
+	writeJson(w, result)
+}
+
 func main() {
 
 	if vaultPath == "" {
 		log.Fatal("VAULT_PATH is not set")
 	}
 
-	docs := loadDocs(vaultPath)
+	docs = loadDocs(vaultPath)
 	log.Printf("\ndone: %d files loaded\n", len(docs))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/docs", handleDocs)
+	mux.HandleFunc("GET /api/doc/{slug...}", handleDoc)
+	mux.HandleFunc("GET /api/tags", handleTags)
+	mux.HandleFunc("GET /api/tag/{tag}", handleTag)
+	mux.HandleFunc("GET /api/search", handleSearch)
+
+	mux.Handle("/", http.FileServer(http.Dir("public")))
+
+	log.Println("Server listening on port 8080")
+	log.Fatal(http.ListenAndServe(":8080", mux))
 }
