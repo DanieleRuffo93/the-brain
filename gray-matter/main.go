@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gomarkdown/markdown"
 )
 
 var vaultPath = os.Getenv("VAULT_PATH")
@@ -23,6 +25,19 @@ func (f Frontmatter) Print() {
 		strings.Join(f.Tags, ","),
 		strings.Join(f.Aliases, ","),
 		strings.Join(f.Related, ","))
+}
+
+type Doc struct {
+	Slug        string
+	Frontmatter Frontmatter
+	Content     string
+	HTML        string
+}
+
+func getSlugFromPath(vaultPath, filePath string) string {
+	rel, _ := filepath.Rel(vaultPath, filePath)
+	rel = strings.TrimSuffix(rel, ".md")
+	return strings.ReplaceAll(rel, string(filepath.Separator), "/")
 }
 
 func parseArray(str string) []string {
@@ -93,45 +108,50 @@ func splitData(data string) (string, string) {
 	return strings.Join(fmLines, "\n"), strings.Join(lines[i:], "\n")
 }
 
+func loadDocs(vault string) []Doc {
+	var docs []Doc
+
+	filepath.WalkDir(vault, func(path string, d os.DirEntry, err error) error {
+
+		if err != nil {
+			log.Printf("warn: cannot access %s: %v", path, err)
+			return nil
+		}
+
+		if d.IsDir() && !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
+
+		if err != nil {
+			log.Printf("warn: cannot access %s: %v", path, err)
+			return nil
+		}
+
+		fmBlock, content := splitData(string(data))
+		frontmatter := parseFrontmatter(fmBlock)
+		html := markdown.ToHTML([]byte(content), nil, nil)
+
+		docs = append(docs, Doc{
+			Slug:        getSlugFromPath(vault, path),
+			Frontmatter: frontmatter,
+			Content:     content,
+			HTML:        string(html),
+		})
+
+		return nil
+	})
+
+	return docs
+}
+
 func main() {
+
 	if vaultPath == "" {
 		log.Fatal("VAULT_PATH is not set")
 	}
 
-	var files []string
-
-	err := filepath.WalkDir(vaultPath, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			// directory entry itself failed — log and skip
-			log.Printf("warn: cannot access %s: %v", path, err)
-			return nil
-		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), ".md") {
-			files = append(files, path)
-		}
-		return nil
-	})
-
-	if err != nil {
-		log.Fatal("fatal: vault walk failed:", err)
-	}
-
-	for _, path := range files {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			log.Printf("warn: cannot read %s: %v", path, err)
-			continue
-		}
-
-		fmt.Printf("\nFile: %s\n", path)
-		fmBlock, _ := splitData(string(data))
-		if fmBlock != "" {
-			fm := parseFrontmatter(fmBlock)
-			fm.Print()
-			// TODO: give visibility of .md without frontmatter
-		}
-
-	}
-
-	fmt.Printf("\ndone: %d files found\n", len(files))
+	docs := loadDocs(vaultPath)
+	log.Printf("\ndone: %d files loaded\n", len(docs))
 }
