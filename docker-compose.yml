@@ -1,0 +1,10 @@
+services:
+  brain:
+    build: ./gray-matter
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./cortex:/cortex:ro
+    environment:
+      - VAULT_PATH=/cortex
+    restart: unless-stopped
