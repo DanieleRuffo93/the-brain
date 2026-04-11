@@ -126,6 +126,7 @@
   .doc-body strong { font-weight: 600; color: var(--text); }
   .wiki-link { color: var(--green); text-decoration: none; border-bottom: 1px solid rgba(74,222,128,0.3); transition: border-color 0.15s; }
   .wiki-link:hover { border-color: var(--green); text-decoration: none !important; }
+  .wiki-link-broken { color: var(--muted); border-bottom: 1px dashed var(--muted); cursor: not-allowed; }
 
   /* Loading */
   .loading { text-align: center; padding: 80px 0; color: var(--muted); font-size: 14px; }
@@ -349,10 +350,9 @@ async function openDoc(slug) {
       <div class="related-section">
         <div class="related-title">Connected concepts</div>
         <div class="related-chips">
-          ${doc.related.map(r => {
-            const rSlug = r.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-            return `<div class="related-chip" onclick="openDoc('${rSlug}')">${r}</div>`;
-          }).join('')}
+          ${doc.related.map(r =>
+            `<div class="related-chip" onclick="openDoc('${r.slug}')">${r.title}</div>`
+          ).join('')}
         </div>
       </div>
     ` : '';

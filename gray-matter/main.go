@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -123,6 +124,34 @@ func splitData(data string) (string, string) {
 	}
 
 	return strings.Join(fmLines, "\n"), strings.Join(lines[i:], "\n")
+}
+
+func resolveTitle(title string) (string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(title))
+	for _, doc := range store.docs {
+		if strings.ToLower(doc.Frontmatter.Title) == lower {
+			return doc.Slug, true
+		}
+		for _, alias := range doc.Frontmatter.Aliases {
+			if strings.ToLower(alias) == lower {
+				return doc.Slug, true
+			}
+		}
+	}
+	return "", false
+}
+
+var wikiLinkRe = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
+
+func processWikiLinks(content string) string {
+	return wikiLinkRe.ReplaceAllStringFunc(content, func(match string) string {
+		title := match[2 : len(match)-2]
+		slug, ok := resolveTitle(title)
+		if ok {
+			return fmt.Sprintf(`<a class="wiki-link" data-slug="%s" href="#">%s</a>`, slug, title)
+		}
+		return fmt.Sprintf(`<span class="wiki-link-broken">%s</span>`, title)
+	})
 }
 
 func parseDoc(path string) (Doc, error) {
@@ -286,18 +315,32 @@ func handleDoc(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	for _, doc := range store.docs {
 		if doc.Slug == slug {
+			html := processWikiLinks(doc.Content)
+			html = string(markdown.ToHTML([]byte(html), nil, nil))
+
+			type relatedDoc struct {
+				Slug  string `json:"slug"`
+				Title string `json:"title"`
+			}
+			related := make([]relatedDoc, 0, len(doc.Frontmatter.Related))
+			for _, title := range doc.Frontmatter.Related {
+				resolvedSlug, ok := resolveTitle(title)
+				if ok {
+					related = append(related, relatedDoc{resolvedSlug, title})
+				}
+			}
 			writeJson(w, struct {
-				Slug    string   `json:"slug"`
-				Title   string   `json:"title"`
-				Tags    []string `json:"tags"`
-				Related []string `json:"related"`
-				HTML    string   `json:"html"`
+				Slug    string       `json:"slug"`
+				Title   string       `json:"title"`
+				Tags    []string     `json:"tags"`
+				Related []relatedDoc `json:"related"`
+				HTML    string       `json:"html"`
 			}{
 				Slug:    doc.Slug,
 				Title:   doc.Frontmatter.Title,
 				Tags:    doc.Frontmatter.Tags,
-				Related: doc.Frontmatter.Related,
-				HTML:    doc.HTML,
+				Related: related,
+				HTML:    html,
 			})
 			return
 		}
