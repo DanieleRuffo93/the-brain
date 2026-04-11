@@ -8,12 +8,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/gomarkdown/markdown"
 )
 
 var vaultPath = os.Getenv("VAULT_PATH")
-var docs []Doc
+
+// store holds all the documents in memory and it is protected by a RWMutex
+// HTTP handlers can read concurrently (RLock), the file system watcher is the only writer (Lock)
+var store struct {
+	mu   sync.RWMutex
+	docs []Doc
+}
 
 type Frontmatter struct {
 	Title   string
@@ -117,6 +125,23 @@ func splitData(data string) (string, string) {
 	return strings.Join(fmLines, "\n"), strings.Join(lines[i:], "\n")
 }
 
+func parseDoc(path string) (Doc, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Doc{}, err
+	}
+
+	fmBlock, content := splitData(string(data))
+	frontmatter := parseFrontmatter(fmBlock)
+	html := markdown.ToHTML([]byte(content), nil, nil)
+	return Doc{
+		Slug:        getSlugFromPath(vaultPath, path),
+		Frontmatter: frontmatter,
+		Content:     content,
+		HTML:        string(html),
+	}, nil
+}
+
 func loadDocs(vault string) []Doc {
 	var docs []Doc
 
@@ -131,28 +156,111 @@ func loadDocs(vault string) []Doc {
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
-
+		doc, err := parseDoc(path)
 		if err != nil {
-			log.Printf("warn: cannot access %s: %v", path, err)
+			log.Printf("warn: cannot parse %s: %v", path, err)
 			return nil
 		}
 
-		fmBlock, content := splitData(string(data))
-		frontmatter := parseFrontmatter(fmBlock)
-		html := markdown.ToHTML([]byte(content), nil, nil)
-
-		docs = append(docs, Doc{
-			Slug:        getSlugFromPath(vault, path),
-			Frontmatter: frontmatter,
-			Content:     content,
-			HTML:        string(html),
-		})
-
+		docs = append(docs, doc)
 		return nil
 	})
 
 	return docs
+}
+
+// watchVault starts goroutine that listens for filesystem events on the vault directory and keeps store.docs in sync
+func watchVault(vault string) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("warn: could not start the vault watcher: %v", err)
+		return
+	}
+
+	// fsnotify does not recurse automatically in subfolders. Need to add them manually
+	filepath.WalkDir(vaultPath, func(path string, d os.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		return watcher.Add(path)
+	})
+
+	go func() {
+		defer watcher.Close()
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				handleFsEvent(event, vault, watcher)
+
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Printf("watcher error: %v", err)
+			}
+		}
+	}()
+}
+
+func handleFsEvent(event fsnotify.Event, vault string, watcher *fsnotify.Watcher) {
+	path := event.Name
+
+	// In case a new directory has been created, add it to the watcher to track .md files inside
+	if event.Has(fsnotify.Create) {
+		info, err := os.Stat(path)
+		if err == nil && info.IsDir() {
+			watcher.Add(path)
+			log.Printf("watcher: added new directory: %s", path)
+			return
+		}
+	}
+
+	if !strings.HasSuffix(path, ".md") {
+		return
+	}
+
+	switch {
+	case event.Has(fsnotify.Create) || event.Has(fsnotify.Write):
+		doc, err := parseDoc(path)
+		if err != nil {
+			log.Printf("watcher: failed to parse %s: %v", path, err)
+			return
+		}
+		upsertDoc(doc)
+		log.Printf("watcher: upserted %s", doc.Slug)
+	case event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename):
+		slug := getSlugFromPath(vault, path)
+		removeDoc(slug)
+		log.Printf("watcher: removed %s", slug)
+	}
+}
+
+func upsertDoc(doc Doc) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	for i, d := range store.docs {
+		if d.Slug == doc.Slug {
+			store.docs[i] = doc
+			return
+		}
+	}
+	store.docs = append(store.docs, doc)
+}
+
+func removeDoc(slug string) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	for i, d := range store.docs {
+		if d.Slug == slug {
+			store.docs = append(store.docs[:i], store.docs[i+1:]...)
+			return
+		}
+	}
 }
 
 func writeJson(w http.ResponseWriter, data any) {
@@ -161,16 +269,22 @@ func writeJson(w http.ResponseWriter, data any) {
 }
 
 func handleDocs(w http.ResponseWriter, r *http.Request) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
 	var result []DocSummary
-	for _, doc := range docs {
+	for _, doc := range store.docs {
 		result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Tags})
 	}
 	writeJson(w, result)
 }
 
 func handleDoc(w http.ResponseWriter, r *http.Request) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
 	slug := r.PathValue("slug")
-	for _, doc := range docs {
+	for _, doc := range store.docs {
 		if doc.Slug == slug {
 			writeJson(w, struct {
 				Slug    string   `json:"slug"`
@@ -192,12 +306,15 @@ func handleDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleTags(w http.ResponseWriter, r *http.Request) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
 	type tagCount struct {
 		Tag   string `json:"tag"`
 		Count int    `json:"count"`
 	}
 	counts := map[string]int{}
-	for _, doc := range docs {
+	for _, doc := range store.docs {
 		for _, tag := range doc.Frontmatter.Tags {
 			counts[tag]++
 		}
@@ -212,7 +329,7 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 func handleTag(w http.ResponseWriter, r *http.Request) {
 	tag := r.PathValue("tag")
 	var result []DocSummary
-	for _, doc := range docs {
+	for _, doc := range store.docs {
 		for _, t := range doc.Frontmatter.Tags {
 			if t == tag {
 				result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Tags})
@@ -223,9 +340,12 @@ func handleTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
 	query := strings.ToLower(r.URL.Query().Get("q"))
 	var result []DocSummary
-	for _, doc := range docs {
+	for _, doc := range store.docs {
 		if strings.Contains(strings.ToLower(doc.Frontmatter.Title), query) ||
 			strings.Contains(strings.ToLower(doc.Content), query) {
 			result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Tags})
@@ -240,8 +360,10 @@ func main() {
 		log.Fatal("VAULT_PATH is not set")
 	}
 
-	docs = loadDocs(vaultPath)
-	log.Printf("\ndone: %d files loaded\n", len(docs))
+	store.docs = loadDocs(vaultPath)
+	log.Printf("\ndone: %d files loaded\n", len(store.docs))
+
+	watchVault(vaultPath)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/docs", handleDocs)
