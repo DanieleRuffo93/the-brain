@@ -124,10 +124,9 @@
   .doc-body a:hover { text-decoration: underline; }
   .doc-body hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
   .doc-body strong { font-weight: 600; color: var(--text); }
-  .wiki-link { color: var(--green); text-decoration: none; border-bottom: 1px solid rgba(74,222,128,0.3); transition: border-color 0.15s; }
-  .wiki-link:hover { border-color: var(--green); text-decoration: none !important; }
-  .wiki-link-broken { color: var(--muted); border-bottom: 1px dashed var(--muted); cursor: not-allowed; }
-
+.wiki-link { color: var(--green); text-decoration: none; transition: opacity 0.15s; }
+.wiki-link:hover { opacity: 0.75; text-decoration: none !important; }
+.wiki-link-broken { color: var(--muted); text-decoration: none; cursor: not-allowed; }
   /* Loading */
   .loading { text-align: center; padding: 80px 0; color: var(--muted); font-size: 14px; }
   .loading-dot { display: inline-block; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; margin: 0 2px; animation: bounce 1.2s infinite; }
