@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/gomarkdown/markdown"
+	"gopkg.in/yaml.v3"
 )
 
 var vaultPath = os.Getenv("VAULT_PATH")
@@ -24,16 +26,27 @@ var store struct {
 	docs []Doc
 }
 
+type Category struct {
+	ID    string `yaml:"id"    json:"id"`
+	Label string `yaml:"label"    json:"label"`
+}
+
+var categories []Category
+
+const uncategorizedID = "uncategorized"
+
 type Frontmatter struct {
-	Title   string
-	Tags    []string
-	Aliases []string
-	Related []string
+	Title    string
+	Category string
+	Tags     []string
+	Aliases  []string
+	Related  []string
 }
 
 func (f Frontmatter) Print() {
-	fmt.Printf("Frontmatter:\n\tTitle: %s\n\tTags: %s\n\tAliases: %s\n\tRelated: %s\n",
+	fmt.Printf("Frontmatter:\n\tCategory:%s\n\tTitle: %s\n\tTags: %s\n\tAliases: %s\n\tRelated: %s\n",
 		f.Title,
+		f.Category,
 		strings.Join(f.Tags, ","),
 		strings.Join(f.Aliases, ","),
 		strings.Join(f.Related, ","))
@@ -47,9 +60,10 @@ type Doc struct {
 }
 
 type DocSummary struct {
-	Slug  string   `json:"slug"`
-	Title string   `json:"title"`
-	Tags  []string `json:"tags"`
+	Slug     string   `json:"slug"`
+	Title    string   `json:"title"`
+	Category string   `json:"category"`
+	Tags     []string `json:"tags"`
 }
 
 func getSlugFromPath(vaultPath, filePath string) string {
@@ -94,6 +108,8 @@ func parseFrontmatter(block string) Frontmatter {
 		switch key {
 		case "title":
 			result.Title = value
+		case "category":
+			result.Category = value
 		case "tags":
 			result.Tags = parseArray(value)
 		case "aliases":
@@ -152,6 +168,43 @@ func processWikiLinks(content string) string {
 		}
 		return fmt.Sprintf(`<span class="wiki-link-broken">%s</span>`, title)
 	})
+}
+
+func loadCategories(vault string) []Category {
+	path := filepath.Join(vault, "categories.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("warn: could not read categories %v", err)
+		}
+		return nil
+	}
+
+	var cfg struct {
+		Categories []Category `yaml:"categories"`
+	}
+	err = yaml.Unmarshal(data, &cfg)
+	if err != nil {
+		log.Printf("warn: could not parse categories.yaml: %v", err)
+		return nil
+	}
+	log.Printf("done: %d categories loaded", len(cfg.Categories))
+	return cfg.Categories
+}
+
+func resolveCategory(id string) string {
+	if id == "" {
+		return uncategorizedID
+	}
+
+	for _, category := range categories {
+		if category.ID == id {
+			return id
+		}
+	}
+
+	log.Printf("warn: unknown category %q — falling back to uncategorized", id)
+	return uncategorizedID
 }
 
 func parseDoc(path string) (Doc, error) {
@@ -247,6 +300,14 @@ func handleFsEvent(event fsnotify.Event, vault string, watcher *fsnotify.Watcher
 		}
 	}
 
+	if filepath.Base(path) == "categories.yaml" && (event.Has(fsnotify.Create) || event.Has(fsnotify.Write)) {
+		store.mu.Lock()
+		categories = loadCategories(vault)
+		store.mu.Unlock()
+		log.Printf("watcher: reloaded categories.yaml")
+		return
+	}
+
 	if !strings.HasSuffix(path, ".md") {
 		return
 	}
@@ -303,7 +364,12 @@ func handleDocs(w http.ResponseWriter, r *http.Request) {
 
 	var result []DocSummary
 	for _, doc := range store.docs {
-		result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Tags})
+		result = append(result, DocSummary{
+			Slug:     doc.Slug,
+			Title:    doc.Frontmatter.Title,
+			Category: doc.Frontmatter.Category,
+			Tags:     doc.Frontmatter.Tags,
+		})
 	}
 	writeJson(w, result)
 }
@@ -326,7 +392,10 @@ func handleDoc(w http.ResponseWriter, r *http.Request) {
 			for _, title := range doc.Frontmatter.Related {
 				resolvedSlug, ok := resolveTitle(title)
 				if ok {
-					related = append(related, relatedDoc{resolvedSlug, title})
+					related = append(related, relatedDoc{
+						Slug:  resolvedSlug,
+						Title: title,
+					})
 				}
 			}
 			writeJson(w, struct {
@@ -348,7 +417,7 @@ func handleDoc(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func handleTags(w http.ResponseWriter, r *http.Request) {
+func handleCategories(w http.ResponseWriter, r *http.Request) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 
@@ -356,15 +425,80 @@ func handleTags(w http.ResponseWriter, r *http.Request) {
 		Tag   string `json:"tag"`
 		Count int    `json:"count"`
 	}
-	counts := map[string]int{}
+	type categoryResponse struct {
+		ID    string     `json:"id"`
+		Label string     `json:"label"`
+		Count int        `json:"count"`
+		Tags  []tagCount `json:"tags"`
+	}
+
+	docCounts := map[string]int{}
+	tagCounts := map[string]map[string]int{} // category → tag → count
+
 	for _, doc := range store.docs {
+		catID := resolveCategory(doc.Frontmatter.Category)
+		docCounts[catID]++
+		if tagCounts[catID] == nil {
+			tagCounts[catID] = map[string]int{}
+		}
 		for _, tag := range doc.Frontmatter.Tags {
-			counts[tag]++
+			tagCounts[catID][tag]++
 		}
 	}
-	var result []tagCount
-	for tag, count := range counts {
-		result = append(result, tagCount{tag, count})
+
+	buildTags := func(catID string) []tagCount {
+		var tags []tagCount
+		for tag, count := range tagCounts[catID] {
+			tags = append(tags, tagCount{tag, count})
+		}
+		// Sort by count descending, then alphabetically for stability.
+		sort.Slice(tags, func(i, j int) bool {
+			if tags[i].Count != tags[j].Count {
+				return tags[i].Count > tags[j].Count
+			}
+			return tags[i].Tag < tags[j].Tag
+		})
+		return tags
+	}
+
+	result := make([]categoryResponse, 0, len(categories)+1)
+	for _, c := range categories {
+		result = append(result, categoryResponse{
+			ID:    c.ID,
+			Label: c.Label,
+			Count: docCounts[c.ID],
+			Tags:  buildTags(c.ID),
+		})
+	}
+
+	if docCounts[uncategorizedID] > 0 {
+		result = append(result, categoryResponse{
+			ID:    uncategorizedID,
+			Label: "Uncategorized",
+			Count: docCounts[uncategorizedID],
+			Tags:  buildTags(uncategorizedID),
+		})
+	}
+
+	writeJson(w, result)
+}
+
+func handleCategory(w http.ResponseWriter, r *http.Request) {
+	catID := r.PathValue("id")
+
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	var result []DocSummary
+	for _, doc := range store.docs {
+		if resolveCategory(doc.Frontmatter.Category) == catID {
+			result = append(result, DocSummary{
+				Slug:     doc.Slug,
+				Title:    doc.Frontmatter.Title,
+				Category: catID,
+				Tags:     doc.Frontmatter.Tags,
+			})
+		}
 	}
 	writeJson(w, result)
 }
@@ -375,7 +509,7 @@ func handleTag(w http.ResponseWriter, r *http.Request) {
 	for _, doc := range store.docs {
 		for _, t := range doc.Frontmatter.Tags {
 			if t == tag {
-				result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Tags})
+				result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Category, doc.Frontmatter.Tags})
 			}
 		}
 	}
@@ -391,7 +525,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	for _, doc := range store.docs {
 		if strings.Contains(strings.ToLower(doc.Frontmatter.Title), query) ||
 			strings.Contains(strings.ToLower(doc.Content), query) {
-			result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Tags})
+			result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Category, doc.Frontmatter.Tags})
 		}
 	}
 	writeJson(w, result)
@@ -403,6 +537,7 @@ func main() {
 		log.Fatal("VAULT_PATH is not set")
 	}
 
+	categories = loadCategories(vaultPath)
 	store.docs = loadDocs(vaultPath)
 	log.Printf("\ndone: %d files loaded\n", len(store.docs))
 
@@ -411,7 +546,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/docs", handleDocs)
 	mux.HandleFunc("GET /api/doc/{slug...}", handleDoc)
-	mux.HandleFunc("GET /api/tags", handleTags)
+	mux.HandleFunc("GET /api/categories", handleCategories)
+	mux.HandleFunc("GET /api/category/{id}", handleCategory)
 	mux.HandleFunc("GET /api/tag/{tag}", handleTag)
 	mux.HandleFunc("GET /api/search", handleSearch)
 

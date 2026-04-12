@@ -1,0 +1,9 @@
+categories:
+  - id: computer-science
+    label: Computer Science
+  - id: mathematics
+    label: Mathematics
+  - id: finance
+    label: Finance
+  - id: personal
+    label: Personal
