@@ -19,6 +19,8 @@
     --tag-bg: #1e2235;
     --tag-text: #8b93c8;
     --green: #4ade80;
+    --highlight-bg: #3d3a00;
+    --highlight-text: #ffd84d;
     --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --mono: 'Fira Code', 'Cascadia Code', 'Courier New', monospace;
     --radius: 10px;
@@ -77,7 +79,7 @@
   /* Main */
   .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
-  /* Mobile topbar — hidden on desktop */
+  /* Mobile topbar */
   .mobile-topbar { display: none; }
   .menu-btn { display: none; background: none; border: none; color: var(--muted); cursor: pointer; padding: 4px; border-radius: 6px; flex-shrink: 0; }
   .mobile-logo { font-size: 20px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 7px; cursor: pointer; flex-shrink: 0; user-select: none; }
@@ -95,19 +97,24 @@
 
   /* Doc cards */
   .doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 36px; }
-  .doc-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; cursor: pointer; transition: all 0.15s; }
+  .doc-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; cursor: pointer; transition: all 0.15s; display: flex; flex-direction: column; gap: 8px; }
   .doc-card:hover { border-color: var(--accent); background: var(--surface2); transform: translateY(-1px); }
-  .doc-card-title { font-size: 18px; font-weight: 600; margin-bottom: 8px; line-height: 1.3; }
+  .doc-card-title { font-size: 18px; font-weight: 600; line-height: 1.3; }
+  .doc-card-summary { font-size: 13px; color: var(--muted); line-height: 1.5; }
   .doc-card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
   .doc-tag { font-size: 11px; background: var(--tag-bg); color: var(--tag-text); border-radius: 4px; padding: 1px 6px; }
 
   /* Search results */
   .search-results { padding: 24px 40px; max-width: 860px; margin: 0 auto; }
-  .result-item { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; cursor: pointer; transition: all 0.15s; }
+  .result-item { padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; cursor: pointer; transition: all 0.15s; }
   .result-item:hover { border-color: var(--accent); }
-  .result-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .result-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .result-snippet { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 6px 0 8px; }
   .result-tags { display: flex; flex-wrap: wrap; gap: 4px; }
   .no-results { text-align: center; color: var(--muted); padding: 60px 0; font-size: 14px; }
+
+  /* Search highlight */
+  mark { background: var(--highlight-bg); color: var(--highlight-text); border-radius: 3px; padding: 0 2px; font-style: normal; }
 
   /* Doc viewer */
   .doc-view { padding: 40px 40px 80px; max-width: 780px; margin: 0 auto; }
@@ -190,7 +197,6 @@
 <div class="overlay" id="overlay" onclick="closeSidebar()"></div>
 
 <div class="app">
-  <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div class="logo" onclick="resetHome()">
@@ -198,20 +204,15 @@
         The Brain
       </div>
     </div>
-
     <div class="search-wrap">
       <input type="search" class="search-input" id="search-input" placeholder="Search everything..." autocomplete="off" spellcheck="false">
     </div>
-
     <nav class="nav-section" id="sidebar-nav">
       <div id="cat-nav"></div>
     </nav>
   </aside>
 
-  <!-- Main -->
   <div class="main">
-
-    <!-- Mobile-only topbar -->
     <div class="mobile-topbar">
       <div class="mobile-logo" onclick="resetHome()">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M9 13a4.5 4.5 0 0 0 3-4"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M12 13h4"/><path d="M12 18h6a2 2 0 0 1 2 2v1"/><path d="M12 8h8"/><path d="M16 8V5a2 2 0 0 1 2-2"/><circle cx="16" cy="13" r=".5"/><circle cx="18" cy="3" r=".5"/><circle cx="20" cy="21" r=".5"/><circle cx="20" cy="8" r=".5"/></svg>
@@ -261,6 +262,19 @@ function toggleSidebar() {
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('open');
   document.getElementById('overlay').classList.remove('show');
+}
+
+// Escapes HTML special chars to safely inject text into innerHTML.
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Wraps all occurrences of query (case-insensitive) in <mark> tags.
+function highlight(text, query) {
+  if (!query) return escHtml(text);
+  const escaped = escHtml(text);
+  const re = new RegExp(escHtml(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  return escaped.replace(re, m => `<mark>${m}</mark>`);
 }
 
 function renderNav() {
@@ -334,10 +348,15 @@ function toggleCategory(cat) {
 }
 
 function resetHome() {
+  clearSearch();
   activeCategory = null;
   activeTag = null;
   showHome();
   closeSidebar();
+}
+
+function clearSearch() {
+  document.getElementById('search-input').value = '';
 }
 
 function showHome() {
@@ -354,17 +373,22 @@ function showHome() {
 }
 
 function docCard(doc) {
+  const summary = doc.summary
+    ? `<div class="doc-card-summary">${escHtml(doc.summary)}</div>`
+    : '';
   return `
     <div class="doc-card" onclick="openDoc('${doc.slug}')">
-      <div class="doc-card-title">${doc.title}</div>
+      <div class="doc-card-title">${escHtml(doc.title)}</div>
+      ${summary}
       <div class="doc-card-tags">
-        ${(doc.tags || []).map(t => `<span class="doc-tag">${t}</span>`).join('')}
+        ${(doc.tags || []).map(t => `<span class="doc-tag">${escHtml(t)}</span>`).join('')}
       </div>
     </div>
   `;
 }
 
 async function showCategoryView(cat) {
+  clearSearch();
   currentView = 'category';
   setMobileContext(cat.label);
   renderNav();
@@ -385,6 +409,7 @@ async function showCategoryView(cat) {
 }
 
 async function showTagView(tag) {
+  clearSearch();
   currentView = 'tag';
   setMobileContext(tag);
   renderNav();
@@ -421,20 +446,23 @@ async function runSearch(q) {
   try {
     const results = await api(`/api/search?q=${encodeURIComponent(q)}`);
     if (!results.length) {
-      content.innerHTML = `<div class="search-results"><div class="no-results">No results for "<strong>${q}</strong>"</div></div>`;
+      content.innerHTML = `<div class="search-results"><div class="no-results">No results for "<strong>${escHtml(q)}</strong>"</div></div>`;
       return;
     }
     content.innerHTML = `
       <div class="search-results">
-        <div class="section-title" style="margin-bottom:16px">${results.length} result${results.length !== 1 ? 's' : ''} for "${q}"</div>
-        ${results.map(doc => `
-          <div class="result-item" onclick="openDoc('${doc.slug}')">
-            <div style="flex:1">
-              <div class="result-title">${doc.title}</div>
-              <div class="result-tags">${(doc.tags || []).map(t => `<span class="doc-tag">${t}</span>`).join('')}</div>
+        <div class="section-title" style="margin-bottom:16px">${results.length} result${results.length !== 1 ? 's' : ''} for "${escHtml(q)}"</div>
+        ${results.map(doc => {
+          const titleHtml = highlight(doc.title, doc.match_in === 'title' ? q : '');
+          const snippetHtml = doc.snippet ? `<div class="result-snippet">${highlight(doc.snippet, q)}</div>` : '';
+          return `
+            <div class="result-item" onclick="openDoc('${doc.slug}')">
+              <div class="result-title">${titleHtml}</div>
+              ${snippetHtml}
+              <div class="result-tags">${(doc.tags || []).map(t => `<span class="doc-tag">${escHtml(t)}</span>`).join('')}</div>
             </div>
-          </div>
-        `).join('')}
+          `;
+        }).join('')}
       </div>
     `;
   } catch (e) {
@@ -443,6 +471,7 @@ async function runSearch(q) {
 }
 
 async function openDoc(slug) {
+  clearSearch();
   currentView = 'doc';
   closeSidebar();
   const content = document.getElementById('content');
@@ -457,7 +486,7 @@ async function openDoc(slug) {
         <div class="related-title">Connected concepts</div>
         <div class="related-chips">
           ${doc.related.map(r =>
-            `<div class="related-chip" onclick="openDoc('${r.slug}')">${r.title}</div>`
+            `<div class="related-chip" onclick="openDoc('${r.slug}')">${escHtml(r.title)}</div>`
           ).join('')}
         </div>
       </div>
@@ -466,10 +495,10 @@ async function openDoc(slug) {
     content.innerHTML = `
       <div class="doc-view">
         <div class="doc-header">
-          <div class="doc-title">${doc.title}</div>
+          <div class="doc-title">${escHtml(doc.title)}</div>
           <div class="doc-meta-row">
             <div class="doc-header-tags">
-              ${(doc.tags || []).map(t => `<span class="doc-header-tag" onclick="activeTag='${t}'; showTagView('${t}')">${t}</span>`).join('')}
+              ${(doc.tags || []).map(t => `<span class="doc-header-tag" onclick="activeTag='${escHtml(t)}'; showTagView('${escHtml(t)}')">${escHtml(t)}</span>`).join('')}
             </div>
           </div>
         </div>

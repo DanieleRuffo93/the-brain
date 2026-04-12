@@ -64,6 +64,16 @@ type DocSummary struct {
 	Title    string   `json:"title"`
 	Category string   `json:"category"`
 	Tags     []string `json:"tags"`
+	Summary  string   `json:"summary,omitempty"`
+}
+
+func extractSummary(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), ">") {
+			return strings.TrimSpace(strings.TrimPrefix(line, ">"))
+		}
+	}
+	return ""
 }
 
 func getSlugFromPath(vaultPath, filePath string) string {
@@ -369,6 +379,7 @@ func handleDocs(w http.ResponseWriter, r *http.Request) {
 			Title:    doc.Frontmatter.Title,
 			Category: doc.Frontmatter.Category,
 			Tags:     doc.Frontmatter.Tags,
+			Summary:  extractSummary(doc.Content),
 		})
 	}
 	writeJson(w, result)
@@ -509,7 +520,12 @@ func handleTag(w http.ResponseWriter, r *http.Request) {
 	for _, doc := range store.docs {
 		for _, t := range doc.Frontmatter.Tags {
 			if t == tag {
-				result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Category, doc.Frontmatter.Tags})
+				result = append(result, DocSummary{
+					Slug:     doc.Slug,
+					Title:    doc.Frontmatter.Title,
+					Category: doc.Frontmatter.Category,
+					Tags:     doc.Frontmatter.Tags,
+				})
 			}
 		}
 	}
@@ -521,12 +537,65 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	defer store.mu.RUnlock()
 
 	query := strings.ToLower(r.URL.Query().Get("q"))
-	var result []DocSummary
+
+	type searchResult struct {
+		Slug    string   `json:"slug"`
+		Title   string   `json:"title"`
+		Tags    []string `json:"tags"`
+		Summary string   `json:"summary,omitempty"`
+		Snippet string   `json:"snippet,omitempty"`
+		MatchIn string   `json:"match_in"` // "title" or "content"
+	}
+
+	var result []searchResult
 	for _, doc := range store.docs {
-		if strings.Contains(strings.ToLower(doc.Frontmatter.Title), query) ||
-			strings.Contains(strings.ToLower(doc.Content), query) {
-			result = append(result, DocSummary{doc.Slug, doc.Frontmatter.Title, doc.Frontmatter.Category, doc.Frontmatter.Tags})
+		contentLower := strings.ToLower(doc.Content)
+		inTitle := strings.Contains(strings.ToLower(doc.Frontmatter.Title), query)
+		inContent := strings.Contains(contentLower, query)
+		if !inTitle && !inContent {
+			continue
 		}
+
+		matchIn := "title"
+		snippet := ""
+		if inContent {
+			matchIn = "content"
+			idx := strings.Index(contentLower, query)
+			start := idx - 60
+			if start < 0 {
+				start = 0
+			}
+			end := idx + len(query) + 60
+			if end > len(doc.Content) {
+				end = len(doc.Content)
+			}
+			raw := doc.Content[start:end]
+
+			raw = strings.ReplaceAll(raw, "#", "")
+			raw = strings.ReplaceAll(raw, "*", "")
+			raw = strings.ReplaceAll(raw, "`", "")
+			raw = strings.ReplaceAll(raw, ">", "")
+			raw = strings.ReplaceAll(raw, "\n", " ")
+			snippet = strings.TrimSpace(raw)
+			if start > 0 {
+				snippet = "…" + snippet
+			}
+			if end < len(doc.Content) {
+				snippet = snippet + "…"
+			}
+			// In case is also in title, precedence to it
+			if inTitle {
+				matchIn = "title"
+			}
+		}
+		result = append(result, searchResult{
+			Slug:    doc.Slug,
+			Title:   doc.Frontmatter.Title,
+			Tags:    doc.Frontmatter.Tags,
+			Summary: extractSummary(doc.Content),
+			Snippet: snippet,
+			MatchIn: matchIn,
+		})
 	}
 	writeJson(w, result)
 }
