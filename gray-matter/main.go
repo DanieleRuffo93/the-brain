@@ -27,8 +27,9 @@ var store struct {
 }
 
 type Category struct {
-	ID    string `yaml:"id"    json:"id"`
-	Label string `yaml:"label"    json:"label"`
+	ID          string `yaml:"id"    json:"id"`
+	Label       string `yaml:"label"    json:"label"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 var categories []Category
@@ -57,6 +58,7 @@ type Doc struct {
 	Frontmatter Frontmatter
 	Content     string
 	HTML        string
+	Pending     bool
 }
 
 type DocSummary struct {
@@ -68,7 +70,7 @@ type DocSummary struct {
 }
 
 func extractSummary(content string) string {
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), ">") {
 			return strings.TrimSpace(strings.TrimPrefix(line, ">"))
 		}
@@ -217,7 +219,7 @@ func resolveCategory(id string) string {
 	return uncategorizedID
 }
 
-func parseDoc(path string) (Doc, error) {
+func parseDoc(path string, pending bool) (Doc, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Doc{}, err
@@ -231,6 +233,7 @@ func parseDoc(path string) (Doc, error) {
 		Frontmatter: frontmatter,
 		Content:     content,
 		HTML:        string(html),
+		Pending:     pending,
 	}, nil
 }
 
@@ -248,7 +251,10 @@ func loadDocs(vault string) []Doc {
 			return nil
 		}
 
-		doc, err := parseDoc(path)
+		rel, _ := filepath.Rel(vault, path)
+		isPending := strings.HasPrefix(rel, "pending/") || strings.HasPrefix(rel, "pending\\")
+
+		doc, err := parseDoc(path, isPending)
 		if err != nil {
 			log.Printf("warn: cannot parse %s: %v", path, err)
 			return nil
@@ -324,7 +330,10 @@ func handleFsEvent(event fsnotify.Event, vault string, watcher *fsnotify.Watcher
 
 	switch {
 	case event.Has(fsnotify.Create) || event.Has(fsnotify.Write):
-		doc, err := parseDoc(path)
+		rel, _ := filepath.Rel(vault, path)
+		isPending := strings.HasPrefix(rel, "pending/") || strings.HasPrefix(rel, "pending\\")
+
+		doc, err := parseDoc(path, isPending)
 		if err != nil {
 			log.Printf("watcher: failed to parse %s: %v", path, err)
 			return
@@ -508,6 +517,7 @@ func handleCategory(w http.ResponseWriter, r *http.Request) {
 				Title:    doc.Frontmatter.Title,
 				Category: catID,
 				Tags:     doc.Frontmatter.Tags,
+				Summary:  extractSummary(doc.Content),
 			})
 		}
 	}
@@ -525,6 +535,7 @@ func handleTag(w http.ResponseWriter, r *http.Request) {
 					Title:    doc.Frontmatter.Title,
 					Category: doc.Frontmatter.Category,
 					Tags:     doc.Frontmatter.Tags,
+					Summary:  extractSummary(doc.Content),
 				})
 			}
 		}
@@ -561,14 +572,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		if inContent {
 			matchIn = "content"
 			idx := strings.Index(contentLower, query)
-			start := idx - 60
-			if start < 0 {
-				start = 0
-			}
-			end := idx + len(query) + 60
-			if end > len(doc.Content) {
-				end = len(doc.Content)
-			}
+			start := max(idx-60, 0)
+			end := min(idx+len(query)+60, len(doc.Content))
 			raw := doc.Content[start:end]
 
 			raw = strings.ReplaceAll(raw, "#", "")
@@ -606,6 +611,8 @@ func main() {
 		log.Fatal("VAULT_PATH is not set")
 	}
 
+	pendingPath = filepath.Join(vaultPath, "pending")
+
 	categories = loadCategories(vaultPath)
 	store.docs = loadDocs(vaultPath)
 	log.Printf("\ndone: %d files loaded\n", len(store.docs))
@@ -619,6 +626,12 @@ func main() {
 	mux.HandleFunc("GET /api/category/{id}", handleCategory)
 	mux.HandleFunc("GET /api/tag/{tag}", handleTag)
 	mux.HandleFunc("GET /api/search", handleSearch)
+
+	// AI draft pipeline
+	mux.HandleFunc("POST /api/draft", handleDraft)
+	mux.HandleFunc("GET /api/pending", handlePending)
+	mux.HandleFunc("POST /api/review/{slug}/approve", handleApprove)
+	mux.HandleFunc("POST /api/review/{slug}/reject", handleReject)
 
 	mux.Handle("/", http.FileServer(http.Dir("public")))
 

@@ -5,7 +5,8 @@ services:
     ports:
       - "${HOST_PORT}:8080"
     volumes:
-      - ./cortex:/cortex:ro
+      - ./cortex:/cortex
     environment:
       - VAULT_PATH=/cortex
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     restart: unless-stopped

@@ -1,9 +1,15 @@
 categories:
-  - id: computer-science
-    label: Computer Science
-  - id: mathematics
-    label: Mathematics
-  - id: finance
-    label: Finance
-  - id: personal
-    label: Personal
+    - id: computer-science
+      label: Computer Science
+      description: Programming languages, compilers, algorithms, data structures, software architecture, operating systems
+    - id: mathematics
+      label: Mathematics
+      description: Discrete math, calculus, linear algebra, logic, proofs, statistics, probability
+    - id: finance
+      label: Finance
+      description: Markets, accounting, investments, economics, personal finance, trading, valuation
+    - id: personal
+      label: Personal
+      description: Productivity, habits, mental models, learning, psychology, decision making, self-improvement
+    - id: history
+      label: History
