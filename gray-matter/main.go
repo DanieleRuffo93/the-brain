@@ -62,17 +62,23 @@ type Doc struct {
 }
 
 type DocSummary struct {
-	Slug     string   `json:"slug"`
-	Title    string   `json:"title"`
-	Category string   `json:"category"`
-	Tags     []string `json:"tags"`
-	Summary  string   `json:"summary,omitempty"`
+	Slug       string   `json:"slug"`
+	Title      string   `json:"title"`
+	Category   string   `json:"category"`
+	Tags       []string `json:"tags"`
+	Summary    string   `json:"summary,omitempty"`
+	ModifiedAt int64    `json:"modified_at,omitempty"`
 }
 
 func extractSummary(content string) string {
 	for line := range strings.SplitSeq(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), ">") {
-			return strings.TrimSpace(strings.TrimPrefix(line, ">"))
+			quote := strings.TrimSpace(strings.TrimPrefix(line, ">"))
+			quote = stripMarkdown(quote)
+			if len(quote) > 120 {
+				quote = quote[:117] + "..."
+			}
+			return quote
 		}
 	}
 	return ""
@@ -267,6 +273,14 @@ func loadDocs(vault string) []Doc {
 	return docs
 }
 
+func stripMarkdown(content string) string {
+	content = strings.ReplaceAll(content, "#", "")
+	content = strings.ReplaceAll(content, "*", "")
+	content = strings.ReplaceAll(content, "`", "")
+	content = strings.ReplaceAll(content, "—", "-")
+	return strings.ReplaceAll(content, ">", "")
+}
+
 // watchVault starts goroutine that listens for filesystem events on the vault directory and keeps store.docs in sync
 func watchVault(vault string) {
 	watcher, err := fsnotify.NewWatcher()
@@ -383,13 +397,21 @@ func handleDocs(w http.ResponseWriter, r *http.Request) {
 
 	var result []DocSummary
 	for _, doc := range store.docs {
-		result = append(result, DocSummary{
-			Slug:     doc.Slug,
-			Title:    doc.Frontmatter.Title,
-			Category: doc.Frontmatter.Category,
-			Tags:     doc.Frontmatter.Tags,
-			Summary:  extractSummary(doc.Content),
-		})
+		if !doc.Pending {
+			info, err := os.Stat(filepath.Join(vaultPath, doc.Slug+".md"))
+			modifiedAt := int64(0)
+			if err != nil {
+				modifiedAt = info.ModTime().Unix()
+			}
+			result = append(result, DocSummary{
+				Slug:       doc.Slug,
+				Title:      doc.Frontmatter.Title,
+				Category:   doc.Frontmatter.Category,
+				Tags:       doc.Frontmatter.Tags,
+				Summary:    extractSummary(doc.Content),
+				ModifiedAt: modifiedAt,
+			})
+		}
 	}
 	writeJson(w, result)
 }
@@ -511,7 +533,7 @@ func handleCategory(w http.ResponseWriter, r *http.Request) {
 
 	var result []DocSummary
 	for _, doc := range store.docs {
-		if resolveCategory(doc.Frontmatter.Category) == catID {
+		if resolveCategory(doc.Frontmatter.Category) == catID && !doc.Pending {
 			result = append(result, DocSummary{
 				Slug:     doc.Slug,
 				Title:    doc.Frontmatter.Title,
@@ -529,7 +551,7 @@ func handleTag(w http.ResponseWriter, r *http.Request) {
 	var result []DocSummary
 	for _, doc := range store.docs {
 		for _, t := range doc.Frontmatter.Tags {
-			if t == tag {
+			if t == tag && !doc.Pending {
 				result = append(result, DocSummary{
 					Slug:     doc.Slug,
 					Title:    doc.Frontmatter.Title,
@@ -576,10 +598,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			end := min(idx+len(query)+60, len(doc.Content))
 			raw := doc.Content[start:end]
 
-			raw = strings.ReplaceAll(raw, "#", "")
-			raw = strings.ReplaceAll(raw, "*", "")
-			raw = strings.ReplaceAll(raw, "`", "")
-			raw = strings.ReplaceAll(raw, ">", "")
+			raw = stripMarkdown(raw)
 			raw = strings.ReplaceAll(raw, "\n", " ")
 			snippet = strings.TrimSpace(raw)
 			if start > 0 {
@@ -605,6 +624,49 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, result)
 }
 
+func handleDocRaw(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	path := filepath.Join(vaultPath, slug+".md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	store.mu.RLock()
+	title := ""
+	for _, doc := range store.docs {
+		if doc.Slug == slug {
+			title = doc.Frontmatter.Title
+			break
+		}
+	}
+	store.mu.RUnlock()
+	writeJson(w, map[string]any{"raw": string(data), "title": title})
+}
+
+func handleDocUpdate(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	var body struct {
+		Content string `json:"content"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	path := filepath.Join(vaultPath, slug+".md")
+	err = os.WriteFile(path, []byte(body.Content), 0644)
+	if err != nil {
+		http.Error(w, "Error while updating file", http.StatusInternalServerError)
+		return
+	}
+
+	writeJson(w, map[string]any{"saved": true})
+
+}
+
 func main() {
 
 	if vaultPath == "" {
@@ -626,6 +688,8 @@ func main() {
 	mux.HandleFunc("GET /api/category/{id}", handleCategory)
 	mux.HandleFunc("GET /api/tag/{tag}", handleTag)
 	mux.HandleFunc("GET /api/search", handleSearch)
+	mux.HandleFunc("GET /api/doc/raw/{slug...}", handleDocRaw)
+	mux.HandleFunc("PUT /api/doc/{slug...}", handleDocUpdate)
 
 	// AI draft pipeline
 	mux.HandleFunc("POST /api/draft", handleDraft)
