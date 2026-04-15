@@ -33,7 +33,6 @@ the-brain/
     ├── ai.go
     ├── pending.go
     ├── public/
-    │   └── index.html    # Single-page frontend
     ├── Dockerfile
     └── go.mod
 ```
