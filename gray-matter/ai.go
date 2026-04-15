@@ -100,12 +100,14 @@ ABSOLUTE RULES:
 - The document must be written in: %s
 - Every section title must also be in %s
 - Be exhaustive and precise. This document must stand alone as a complete explanation of the concept. Do not be superficial.
+- Avoid using hyphen
+- The blockquote (defined later) must be a single concise sentence, maximum 120 characters.
 
 FRONTMATTER:
 The document must open with a YAML frontmatter block in this exact format:
 
 ---
-title: <Title Case name of the concept>
+title: <A title that best fit the topic of this document>
 category: <see CATEGORIES below>
 tags: [<2-5 lowercase tags, comma separated>]
 aliases: [<alternative names or spellings, can be empty>]
