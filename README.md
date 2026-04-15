@@ -4,7 +4,6 @@
 
 **Status:** WIP
 
----
 
 ## Why I built this
 
@@ -14,11 +13,13 @@ I wanted to remove that friction entirely. The Brain lets me capture a topic in 
 
 If you feel that this project could fit your workflow, enjoy.
 
+
 ## Roadmap
 
 The next step is taking this further into my own development workflow: a **TUI client**, built with Bubble Tea, that lives inside Neovim and lets me consult my vault and draft new concept documents without ever leaving the terminal. It will be my first TUI project, and it will talk directly to this API.
 
 I also plan to integrate to lavarege this project to study and learn something about embedding. I will implement a **RAG** leveraging Qdrant probably.
+
 
 ## Architecture Overview
 
@@ -39,7 +40,6 @@ the-brain/
 
 The Go server watches the vault directory with `fsnotify`. The frontend is a vanilla SPA served as a static file.
 
----
 
 ## Features
 
@@ -53,7 +53,6 @@ The Go server watches the vault directory with `fsnotify`. The frontend is a van
 - **In-browser editor** — edit any document's raw Markdown with unsaved-changes protection
 - **fsnotify file watching** — edits made outside the app (e.g. in Obsidian) are picked up automatically
 
----
 
 ## Document Format
 
@@ -88,8 +87,6 @@ Connected concepts section listing related concepts as wiki links.
 A resources section with 2-4 references.
 ```
 
----
-
 ## REST API
 
 | Method | Path | Description |
@@ -107,7 +104,7 @@ A resources section with 2-4 references.
 | `POST` | `/api/review/:slug/approve` | Approve a pending draft |
 | `POST` | `/api/review/:slug/reject` | Reject and delete a pending draft |
 
----
+
 
 ## Running with Docker
 
@@ -126,7 +123,6 @@ docker compose up --build
 
 The vault is mounted at `./cortex` inside the container as `/cortex`. Documents you add or edit on disk are picked up automatically.
 
----
 
 ## Running locally (without Docker)
 
@@ -137,7 +133,6 @@ VAULT_PATH=../cortex ANTHROPIC_API_KEY=sk-ant-... go run .
 
 The server starts on `:8080`.
 
----
 
 ## Categories
 
@@ -154,7 +149,6 @@ categories:
 
 The AI will pick the closest existing category, or propose a new one prefixed with `__NEW__:` — which requires explicit confirmation before being added.
 
----
 
 ## License
 MIT
