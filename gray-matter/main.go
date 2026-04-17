@@ -400,7 +400,7 @@ func handleDocs(w http.ResponseWriter, r *http.Request) {
 		if !doc.Pending {
 			info, err := os.Stat(filepath.Join(vaultPath, doc.Slug+".md"))
 			modifiedAt := int64(0)
-			if err != nil {
+			if err == nil {
 				modifiedAt = info.ModTime().Unix()
 			}
 			result = append(result, DocSummary{
