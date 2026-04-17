@@ -398,7 +398,7 @@ body {
 /* Home */
 .home {
   padding: 40px 40px 60px;
-  max-width: 860px;
+  max-width: 90%;
   margin: 0 auto;
 }
 .section-title {
@@ -612,7 +612,7 @@ mark {
 /* Doc viewer */
 .doc-view {
   padding: 40px 40px 80px;
-  max-width: 780px;
+  max-width: 90%;
   margin: 0 auto;
   position: relative;
 }
@@ -803,7 +803,7 @@ mark {
   padding: 16px 18px;
   overflow-x: auto;
   margin: 16px 0;
-  max-width: 100%;
+  max-width: fit-content;
 }
 .doc-body pre code {
   background: none;
@@ -1176,12 +1176,14 @@ mark {
   }
   .home {
     padding: 20px 16px 48px;
+    max-width: 100%;
   }
   .search-results {
     padding: 16px;
   }
   .doc-view {
     padding: 20px 16px 60px;
+    max-width: 100%;
   }
   .doc-editor {
     padding: 20px 16px 60px;
