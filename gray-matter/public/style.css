@@ -913,8 +913,9 @@ mark {
 
 /* Editor */
 .doc-editor {
-  padding: 40px 40px 80px;
-  max-width: 780px;
+  padding: 40px 40px 40px;
+  max-width: 90%;
+  height: 90%;
   margin: 0 auto;
 }
 .editor-nav-bar {
@@ -965,6 +966,7 @@ mark {
 }
 .editor-textarea {
   width: 100%;
+  height: 100%;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1186,7 +1188,8 @@ mark {
     max-width: 100%;
   }
   .doc-editor {
-    padding: 20px 16px 60px;
+    padding: 20px 16px 20px;
+    max-width: 100%;
   }
   .doc-grid {
     grid-template-columns: 1fr;
