@@ -992,7 +992,6 @@ mark {
 /* Loading */
 .loading {
   text-align: center;
-  padding: 80px 0;
   color: var(--muted);
   font-size: 14px;
 }
