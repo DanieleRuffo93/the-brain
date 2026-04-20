@@ -13,3 +13,7 @@ categories:
       description: Productivity, habits, mental models, learning, psychology, decision making, self-improvement
     - id: history
       label: History
+    - id: linguistics
+      label: Linguistics
+    - id: mechanical-engineering
+      label: Mechanical Engineering
